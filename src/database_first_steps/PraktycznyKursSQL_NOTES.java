@@ -1269,31 +1269,276 @@ wyników zapytañ, grupuj¹cych dane (zmniejszaj¹c liczbê wierszy, poprawiamy czyte
 raportów), druga — dostosowaæ dane pochodz¹ce z arkuszy kalkulacyjnych do
 struktury tabel bazodanowych.
 
+
+////////////////////////OVER 
+
 Serwery bazodanowe pozwalaj¹ okreœliæ dodatkowy porz¹dek grupowania w klauzuli
 OVER. Zdefiniowane w tej klauzuli grupy s¹ nazywane partycjami i mog¹ byæ u¿yte do
 wywo³ania funkcji grupuj¹cych oraz funkcji rankingu, okienkowych i analitycznych.
 
+Przyk³ad : 
+
+Spróbujmy dodaæ kolumnê z wynikiem dowolnej
+funkcji grupuj¹cej, np. z wartoœci¹ cen wszystkich zamówieñ:
+
+SELECT SalesOrderID, TotalDue, AVG(TotalDue)
+FROM [SalesLT].[SalesOrderHeader];
+------------------------------------------------------------
+Msg 8120, Level 16, State 1, Line 8
+Column 'SalesLT.SalesOrderHeader.SalesOrderID' is invalid in the select list
+because it is not contained in either an aggregate function or the GROUP BY
+clause.
+
+Poniewa¿ to zapytanie niejawnie grupuje dane, próba jego wykonania skoñczy³a
+siê b³êdem — mamy kilkadziesi¹t identyfikatorów i wartoœci poszczególnych
+zamówieñ, a wiêc dwie pierwsze kolumny wyniku zapytania musia³yby
+liczyæ trzydzieœci trzy wiersze, a ostatnia tylko jeden. Dodanie klauzuli
+GROUP BY te¿ nie rozwi¹¿e problemu:
+
+SELECT SalesOrderID, TotalDue, AVG(TotalDue) as Œrednia
+FROM [SalesLT].[SalesOrderHeader]
+GROUP BY SalesOrderID, TotalDue;
+
+Teraz otrzymaliœmy trzydzieœci trzy grupy i dla ka¿dej z nich zosta³a wywo³ana
+funkcja grupuj¹ca. Poniewa¿ ka¿da grupa zawiera dok³adnie jeden wiersz,
+policzona na jego podstawie œrednia nie jest œredni¹ wartoœci¹ wszystkich
+zamówieñ, tylko pojedynczego zamówienia. Aby uzyskaæ poprawny wynik,
+musielibyœmy wywo³aæ funkcjê grupuj¹c¹ tylko raz, czyli utworzyæ tylko
+dla niej grupê zawieraj¹c¹ wszystkie zaklasyfikowane wiersze — pozwala na to
+w³aœnie klauzula OVER:
+
+SELECT SalesOrderID, TotalDue,
+AVG(TotalDue) OVER() AS Œrednia
+FROM [SalesLT].[SalesOrderHeader];
+
+Pusta klauzula OVER utworzy³a jedn¹ partycjê. Klauzula OVER pozwala wywo³aæ ka¿d¹ funkcjê grupuj¹c¹,
+a jej wynik mo¿e byæ u¿yty w wyra¿eniach 
+
+SELECT SalesOrderID, TotalDue,
+MIN(TotalDue) OVER() AS min,
+MAX(TotalDue) OVER() AS max,
+AVG(TotalDue) OVER() AS avg,
+TotalDue - AVG(TotalDue) OVER() AS diff
+FROM [SalesLT].[SalesOrderHeader];
+
+////////////////////////////////////PARTITION BY 	
+ Je¿eli w klauzuli OVER zostanie umieszczone s³owo kluczowe PARTITION BY, funkcja grupuj¹ca
+lub funkcja rankingu zostan¹ wywo³ane dla ka¿dej zdefiniowanej w ten sposób
+partycji. Klauzula OVER (PARTITION BY) odpowiada wiêc niepustej klauzuli GROUP BY.
+
+Chcemy osobno policzyæ liczebnoœæ ka¿dej kategorii, musimy wiêc 
+utworzyæ partycje na podstawie kolumny.
+
+SELECT C.[Name],
+COUNT(*) OVER (PARTITION BY C.ProductCategoryID) AS LiczbaDuplikatów
+FROM [SalesLT].[ProductCategory] AS C
+JOIN [SalesLT].[Product] AS P
+ON C.ProductCategoryID=P.ProductCategoryID;
+
+Klauzula OVER (PARTITION BY) pozwala pomieszaæ w jednym zapytaniu dane na ró¿nych
+poziomach szczegó³owoœci. Przyk³ad : dla danych z wiersza dodajemy kolejn¹ kolumnê z 
+danymi na temat ca³kowitej iloœci pieniêdzy jak¹ wyda ów klient . 
+
+SELECT CustomerID, SalesOrderID, TotalDue,
+SUM(TotalDue) OVER(PARTITION BY [CustomerID]) AS SumTotalDue
+FROM [SalesLT].[SalesOrderHeader]
+ORDER BY [CustomerID];
+
+SELECT SalesOrderID, CustomerID, TotalDue,
+CAST (100. * TotalDue / SUM(TotalDue) OVER (PARTITION BY CustomerID) AS
+NUMERIC (5,2)) AS PctCust,
+CAST (100. * TotalDue / SUM(TotalDue) OVER () AS NUMERIC (5,2)) AS PctTotal
+FROM [SalesLT].[SalesOrderHeader];
+
+Klauzula OVER pozwala okreœliæ partycje (dla ka¿dej partycji wywo³ana zostanie
+okreœlona funkcja), porz¹dek (posortowanie wierszy w partycjach jest wymagane w przypadku u¿ycia
+funkcji rankingu, okienkowych lub analitycznych) oraz dodatkowo ograniczyæ liczbê widocznych w danym
+momencie wierszy (zdefiniowaæ okienko danych)
+
+///////////////////////////////////////////Funkcje rankingu
+Funkcje rankingu, w przeciwieñstwie do funkcji grupuj¹cych, mog¹ byæ wywo³ywane
+dla utworzonych za pomoc¹ klauzuli OVER partycji, ale nie dla utworzonych za pomoc¹
+klauzuli GROUP BY grup.
+
+Przyk³ady : 
+1. Zwracaj¹ca numer wiersza funkcja ROW_NUMBER() — w jej przypadku ka¿dy
+wiersz wyniku otrzyma kolejny numer.
+2. Zwracaj¹ca ten sam numer wiersza dla powtarzaj¹cych siê wartoœci funkcja
+DENSE_RANK () — zachowuje ona ci¹g³oœæ numeracji wierszy wyniku. Innymi
+s³owy, funkcja DENSE_RANK () numeruje wartoœci.
+3. Zwracaj¹ca ten sam numer dla powtarzaj¹cych siê wartoœci funkcja RANK()
+— nie zachowuje ona ci¹g³oœci numeracji, za to zwraca prawid³ow¹ liczbê
+wierszy wyniku.
+4. Dziel¹ca wiersze wyniku na okreœlon¹ liczbê bloków funkcja NTILE() — w jej
+przypadku do ka¿dego bloku zostanie zaklasyfikowanych tyle samo (+/– 1)
+wierszy.
+
+SELECT FirstName,
+ROW_NUMBER() OVER(ORDER BY FirstName) AS ROW_NUMBER,
+RANK() OVER(ORDER BY FirstName) AS RANK,
+DENSE_RANK() OVER(ORDER BY FirstName)AS DENSE_RANK,
+NTILE(3) OVER (ORDER BY FirstName) AS NTILE
+FROM [SalesLT].[Customer]
+WHERE FirstName IN ('Andrew','Juanita','Christopher');
+
+Poniewa¿ wynik wszystkich funkcji rankingu zale¿y od uporz¹dkowania wierszy,
+wymagaj¹ one posortowania partycji.
+
+Funkcje rankingu s¹ wywo³ywane raz dla ka¿dej partycji. Pozwala to np. osobno ponumerowaæ
+panów i panie:
+SELECT Title, FirstName,
+ROW_NUMBER() OVER( PARTITION BY [Title] ORDER BY FirstName) AS ROW_NUMBER
+FROM [SalesLT].[Customer]
+WHERE FirstName IN ('Andrew','Juanita');
+
+//////////////////////////////////////////////OKIENKA 
+ * Najciekawsz¹ funkcjonalnoœci¹ klauzuli OVER jest mo¿liwoœæ ograniczenia widocznych
+w danym momencie wierszy do zdefiniowanych okienek. W rezultacie wywo³ana
+dla tej klauzuli funkcja „zobaczy” w danym momencie tylko czêœæ wierszy, np.
+tylko bie¿¹cy wiersz. Podczas kolejnego wywo³ania okienko przesunie siê do nastêpnego
+wiersza i ta sama funkcja zostanie wywo³ana dla kolejnego wiersza — i tak dalej.
+
+PRzyk³ad : 
+¯eby zobaczyæ wartoœæ sprzeda¿y z poprzedniego
+wiersza, nale¿y zdefiniowaæ dla tej funkcji okienko danych, ograniczaj¹c
+widoczne przez ni¹ wiersze do poprzedniego. Do zdefiniowania partycji
+s³u¿¹ s³owa kluczowe ROWS lub RANGE:
+
+SELECT [SalesOrderID], DAY([DueDate]) AS Dzieñ, [TotalDue],
+SUM([TotalDue]) OVER(PARTITION BY DAY([DueDate])
+ORDER BY [DueDate]
+ROWS BETWEEN 1 PRECEDING
+AND 1 PRECEDING) AS PreviousRow
+FROM [SalesLT].[SalesOrderHeader]
+ORDER BY [DueDate];
+
+Okienko danych mo¿e byæ zdefiniowane przy u¿yciu instrukcji:
+1. CURRENT ROW — w ten sposób ograniczamy jego wielkoœæ do bie¿¹cego
+wiersza.
+2. PRECEDING — do podanej liczby wierszy poprzedzaj¹cych bie¿¹cy, przy czym
+konstrukcja UNBOUNDED PRECEDING oznacza wszystkie wiersze od pierwszego
+do bie¿¹cego w danej partycji.
+3. FOLLOWING — do podanej liczby wierszy nastêpuj¹cych po bie¿¹cym, przy
+czym konstrukcja UNBOUNDED FOLLOWING oznacza wszystkie wiersze od bie¿¹cego
+do ostatniego w danej partycji.
+
+Poniewa¿ w klauzuli tej zdefiniowaliœmy partycje,
+w pierwszym wierszu ka¿dej partycji zwracana jest wartoœæ NULL (wartoœæ poprzedniego
+wiersza nie istnieje).
+Wynika z tego, ¿e wartoœci 0 PRECEDING oraz 0 FOLLOWING s¹ równoznaczne z u¿yciem
+instrukcji CURRENT ROW.
+
+Jednym z typowych zastosowañ okienek danych jest obliczanie sum narastaj¹cych
+(skumulowanych).
+Kolejnym typowym zastosowaniem okienek jest obliczanie œrednich ruchomych (tego
+typu obliczenia s¹ powszechnie u¿ywane do „wyg³adzania” wykresów liniowych). Na
+przyk³ad mo¿emy ograniczyæ okienko do trzech wierszy (poprzedniego, bie¿¹cego i nastêpnego)
+w danej partycji i dla tych wierszy wywo³aæ funkcjê AVG:
+SELECT [SalesOrderID],DAY([DueDate]) AS Dzieñ, [TotalDue],
+AVG([TotalDue]) OVER(PARTITION BY DAY([DueDate])
+ORDER BY DueDate
+ROWS BETWEEN 1 PRECEDING
+AND 1 FOLLOWING) AS movingAvg
+FROM [SalesLT].[SalesOrderHeader]
+ORDER BY DueDate;
 
 
+//////////////ROW 
+Niestety, zaimplementowana w wersji
+2014 serwera SQL klauzula OVER pozwala u¿yæ frazy RANGE tylko w jednym
+przypadku — do zdefiniowania okienka zawieraj¹cego wszystkie wartoœci
+od pierwszej do bie¿¹cej w danej partycji.
 
+////////////////////////FUNKCJE OKIENKOWE 
+Funkcje okienkowe pozwalaj¹ odwo³aæ siê do wartoœci wskazanego pola w okienku
+danych. Serwer SQL udostêpnia cztery funkcje tego typu:
 
+1. Funkcja LAG domyœlnie zwraca wartoœæ okreœlonego pola z poprzedniego
+wiersza partycji, przy czym je¿eli zostanie wywo³ana dla pierwszego wiersza,
+zwróci NULL. Opcjonalny parametr tej funkcji pozwala okreœliæ przesuniêcie:
 
+SELECT CAST([DueDate] AS Date) AS Date, [SalesOrderID], [TotalDue],
+LAG([TotalDue]) OVER (PARTITION BY [DueDate] ORDER BY [DueDate]) as
+PreviusTotalDue,
+LAG([TotalDue],2) OVER (PARTITION BY [DueDate] ORDER BY [DueDate]) as
+TwoPrecedingTotalDue
+FROM [SalesLT].[SalesOrderHeader]
+ORDER BY [DueDate];
 
+2.Funkcja LEAD domyœlnie zwraca wartoœæ okreœlonego pola z nastêpnego
+wiersza partycji, przy czym je¿eli zostanie wywo³ana dla ostatniego wiersza,
+zwróci NULL. Równie¿ tê funkcjê mo¿na wywo³aæ z opcjonalnym parametrem
+okreœlaj¹cym, o ile wierszy chcemy przesun¹æ odczytywane pole:
 
+SELECT CAST([DueDate] AS DATE) AS Date, [SalesOrderID], [TotalDue],
+LEAD([TotalDue]) OVER (PARTITION BY [DueDate] ORDER BY [DueDate]) as
+NextTotalDue,
+LEAD([TotalDue],2) OVER (PARTITION BY [DueDate] ORDER BY [DueDate]) as
+TwoFollowingTotalDue
+FROM [SalesLT].[SalesOrderHeader]
+ORDER BY [DueDate];
 
+3. Funkcja FIRST_VALUE zwraca wartoœæ pola z pierwszego wiersza bie¿¹cej
+partycji:
+SELECT CAST([DueDate] AS DATE) AS Date, [SalesOrderID], [TotalDue],
+FIRST_VALUE ([TotalDue]) OVER (PARTITION BY [DueDate] ORDER BY [DueDate])
+as FirstTotalDue
+FROM [SalesLT].[SalesOrderHeader]
+ORDER BY [DueDate];
 
+4. Funkcja LAST_VALUE zwraca wartoœæ pola z ostatniego wiersza bie¿¹cej
+partycji:
+SELECT CAST([DueDate] AS DATE) AS Date, [SalesOrderID], [TotalDue],
+LAST_VALUE ([TotalDue]) OVER (PARTITION BY [DueDate] ORDER BY [DueDate]) as
+LastTotalDue
+FROM [SalesLT].[SalesOrderHeader]
+ORDER BY [DueDate];
 
+///////////////////////////////Funkcje analityczne
+Serwer SQL udostêpnia te¿ cztery funkcje analityczne. Dwie z nich zwracaj¹ ranking
+wiersza w danej partycji, dwie kolejne percentyl dla przekazanego procentu.
 
+Ranking wiersza mo¿e byæ obliczony za pomoc¹ funkcji PERCENT_RANK oraz CUME_DIST:
+1. Funkcja PERCENT_RANK zwraca ranking wiersza w danej partycji obliczany
+wed³ug wzoru (RN – 1) / (RC – 1), gdzie RN to kolejny numer wiersza, a RC
+to liczba wierszy w danej partycji.
+2. Funkcja CUME_DIST zwraca ranking wiersza w danej partycji obliczany wed³ug
+wzoru RS/RC, gdzie RS to liczba wierszy o wartoœci mniejszej od wiersza
+bie¿¹cego b¹dŸ mu równej, a RC to liczba wierszy w danej partycji.
 
+SELECT [ProductCategoryID],[ProductNumber], [ListPrice],
+CUME_DIST () OVER (PARTITION BY [ProductCategoryID] ORDER BY [ListPrice] DESC) as
+CumeDist,
+PERCENT_RANK () OVER (PARTITION BY [ProductCategoryID] ORDER BY [ListPrice] DESC) as
+PercentRank
+FROM [SalesLT].[Product]
+WHERE [ProductCategoryID] IN (8,9);
 
+Dwie ostatnie funkcje analityczne zwracaj¹ percentyl dla przekazanego procentu
+(wartoœci z zakresu od 0.0 do 1.0). Percentyl to wielkoœæ, poni¿ej której wystêpuj¹
+wartoœci zadanego procentu wierszy z danej partycji. Najczêœciej u¿ywanym percentylem
+jest mediana, czyli percentyl 50%:
+1. Funkcja PERCENTILE_CONT zwraca wynik, który nie musi pokrywaæ siê
+z jak¹kolwiek wartoœci¹ w danej partycji.
+2. W przypadku funkcji PERCENTILE_DISC zwrócony wynik zawsze pokrywa siê
+z najbli¿sz¹ (wzglêdem pozycji) wartoœci¹ wystêpuj¹c¹ w danej partycji.
+W przypadku obu tych funkcji do okreœlenia kolumny, której wartoœci bêd¹ analizowane,
+s³u¿y dodatkowa klauzula WITHIN GROUP:
+SELECT [ProductCategoryID],[ProductNumber], [ListPrice],
+PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY [ListPrice] DESC)
+OVER (PARTITION BY [ProductCategoryID] ) as MedianCont,
+PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY [ListPrice] DESC)
+OVER (PARTITION BY [ProductCategoryID] ) as MedianDisc
+FROM [SalesLT].[Product]
+WHERE [ProductCategoryID] IN (16,17);
 
+Funkcje rankingu s¹ najprostszym i najwydajniejszym sposobem
+na ponumerowanie i podzielenie na strony zwracanych przez zapytanie
+wierszy.
 
-
-
-
-
-
-
+Okienka i funkcje analityczne pozwalaj¹ wyeliminowaæ kosztowne podzapytania
+powi¹zane przy porównywaniu wierszy z wartoœciami z poprzednich lub
+nastêpnych wierszy.
 
 
 
